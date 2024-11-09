@@ -1,64 +1,104 @@
-import cv2
+#!/usr/bin/env python3
+
+import argparse
 import os
-import numpy as np
 
-# Путь к исходному файлу сканирования визитных карточек
-input_file = '/Volumes/sd_storage/yadisk/family_archive/holzman_business_cards/img20241109_20210851.png'
-output_folder = 'out'
+import cv2
 
-# Создаем папку для сохранения отдельных карточек, если ее нет
-if not os.path.exists(output_folder):
-    os.makedirs(output_folder)
 
-# Загружаем изображение
-image = cv2.imread(input_file)
+def get_next_card_number(folder):
+    existing_files = [
+        f for f in os.listdir(folder) if f.startswith("card_") and f.endswith(".png")
+    ]
 
-# Преобразуем изображение в оттенки серого
-gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    numbers = []
+    for file in existing_files:
+        try:
+            num = int(file.split("_")[1].split(".")[0])
+            numbers.append(num)
+        except ValueError:
+            continue
 
-# Применяем размытие для уменьшения шума
-blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    return max(numbers, default=0) + 1
 
-# Применяем пороговое преобразование с инверсией, чтобы фон стал белым, а объекты — черными
-_, threshold = cv2.threshold(blurred, 200, 255, cv2.THRESH_BINARY_INV)
 
-# Сохраняем промежуточное изображение для проверки
-cv2.imwrite(os.path.join(output_folder, 'threshold_output.jpg'), threshold)
+def main(input_file, output_folder, threshold, padding):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
 
-# Находим контуры после пороговой обработки
-contours, _ = cv2.findContours(threshold, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    image = cv2.imread(input_file)
 
-# Копия изображения для отображения контуров
-contour_image = image.copy()
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-# Проходим по каждому контуру, фильтруя их по форме и размеру
-for i, contour in enumerate(contours):
-    # Вычисляем прямоугольник, ограничивающий контур
-    x, y, w, h = cv2.boundingRect(contour)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Фильтр по форме и размеру, чтобы выбрать только визитки
-    aspect_ratio = w / float(h)
-    if 1.5 < aspect_ratio < 3.5 and w > 200 and h > 100:  # Примерное соотношение сторон визитки
+    _, threshold = cv2.threshold(blurred, threshold, 255, cv2.THRESH_BINARY_INV)
 
-        # Добавляем небольшой отступ для рамки
-        padding = 10  # Размер отступа для белой рамки
-        x_start = max(x - padding, 0)
-        y_start = max(y - padding, 0)
-        x_end = min(x + w + padding, image.shape[1])
-        y_end = min(y + h + padding, image.shape[0])
+    cv2.imwrite(os.path.join(output_folder, "threshold_output.png"), threshold)
 
-        # Вырезаем область визитки с отступом
-        card = image[y_start:y_end, x_start:x_end]
+    contours, _ = cv2.findContours(
+        threshold, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
 
-        # Сохраняем каждый фрагмент как отдельный файл
-        output_path = os.path.join(output_folder, f'card_{i+1}.jpg')
-        cv2.imwrite(output_path, card)
-        print(f'Сохранено: {output_path}')
+    contour_image = image.copy()
 
-        # Отображаем контуры для проверки
-        cv2.rectangle(contour_image, (x_start, y_start), (x_end, y_end), (0, 255, 0), 2)
+    file_number = get_next_card_number(output_folder)
 
-# Сохраняем изображение с отмеченными контурами для проверки
-cv2.imwrite(os.path.join(output_folder, 'contours_output_with_padding.jpg'), contour_image)
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
 
-print("Разделение завершено!")
+        aspect_ratio = w / float(h)
+        if 1.5 < aspect_ratio < 3.5 and w > 200 and h > 100:
+            x_start = max(x - padding, 0)
+            y_start = max(y - padding, 0)
+            x_end = min(x + w + padding, image.shape[1])
+            y_end = min(y + h + padding, image.shape[0])
+
+            card = image[y_start:y_end, x_start:x_end]
+
+            output_path = os.path.join(output_folder, f"card_{file_number+1}.png")
+            file_number += 1
+            cv2.imwrite(output_path, card)
+            print(f"Сохранено: {output_path}")
+
+            cv2.rectangle(
+                contour_image, (x_start, y_start), (x_end, y_end), (0, 255, 0), 2
+            )
+
+    cv2.imwrite(
+        os.path.join(output_folder, "contours_output_with_padding.png"), contour_image
+    )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Script for automatically splitting an image "
+        "containing multiple documents into separate images."
+    )
+    parser.add_argument(
+        "--input_file", type=str, required=True, help="Path to the input image."
+    )
+    parser.add_argument(
+        "--threshold",
+        type=int,
+        default=250,
+        help="Threshold value for image binarization (default is 250).",
+    )
+    parser.add_argument(
+        "--padding",
+        type=int,
+        default=10,
+        help="Framing padding.",
+    )
+    parser.add_argument(
+        "--output_folder",
+        type=str,
+        required=True,
+        help="Folder to save the result.",
+    )
+
+    # Parse the arguments
+    args = parser.parse_args()
+
+    # Run the main function with parsed arguments
+    main(args.input_file, args.output_folder, args.threshold, args.padding)
